@@ -1,0 +1,5 @@
+gradio
+ollama-python
+PyPDF2
+chromadb
+colorama
