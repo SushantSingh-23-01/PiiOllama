@@ -27,6 +27,7 @@ except Exception as e:
     logging.error(f"{Fore.RED}Failed to initialize ChromaDB: {e}{Style.RESET_ALL}")
     chroma_collection = None 
 
+
 # --- Data Models ---
 @dataclass
 class SharedState:
@@ -47,6 +48,18 @@ class SharedState:
     def __post_init__(self):
         os.makedirs(self.chats_dir, exist_ok=True)
         logging.info(f"{Fore.BLUE}Chats directory ensured: {self.chats_dir}{Style.RESET_ALL}")
+        
+        if not os.path.exists(self.profiles_path):
+            try:
+                with open(self.profiles_path, 'w', encoding='utf-8') as f:
+                    json.dump({}, f)
+                logging.info(f"{Fore.GREEN}Created new profiles file: {self.profiles_path}{Style.RESET_ALL}")
+            except IOError as e:
+                logging.error(f"{Fore.RED}Error creating profiles file {self.profiles_path}: {e}{Style.RESET_ALL}")
+        else:
+            logging.info(f"{Fore.BLUE}Profiles file already exists: {self.profiles_path}{Style.RESET_ALL}")
+
+        logging.info(f"{Fore.BLUE}Profiles Path ensured: {self.profiles_path}{Style.RESET_ALL}")
 
 # --- Utility Functions ---
 
