@@ -64,8 +64,9 @@ pip install -r requirements.txt
 ```
 
 3. Run the Application
+**Warning**: `chatui_ollama_rag_proto` (nightly version) has latest updates being made to it. Use `chatui_ollama_rag_stable.py` for smoother experience.
 ```bash
-python chatui_rag_production.py
+python chatui_ollama_rag_stable.py
 ```
 
 ## 📂 Project Structure
