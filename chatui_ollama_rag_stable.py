@@ -55,47 +55,67 @@ class SharedState:
                     json.dump({}, f)
                 logging.info(f"{Fore.GREEN}Created new profiles file: {self.profiles_path}{Style.RESET_ALL}")
             except IOError as e:
-                logging.error(f"{Fore.RED}Error creating profiles file {self.profiles_path}: {e}{Style.RESET_ALL}")
+                logging.critical(f"{Fore.RED}CRITICAL ERROR: Failed to create profiles file {self.profiles_path} due to permission/IO issue: {e}. Please ensure the application has write access to this directory.{Style.RESET_ALL}")
         else:
             logging.info(f"{Fore.BLUE}Profiles file already exists: {self.profiles_path}{Style.RESET_ALL}")
 
         logging.info(f"{Fore.BLUE}Profiles Path ensured: {self.profiles_path}{Style.RESET_ALL}")
 
 # --- Utility Functions ---
+def parse_loggings(msg:str, color:str) -> str:
+    if color == 'green':
+        return Fore.GREEN + msg + Style.RESET_ALL
+    elif color == 'blue':
+        return Fore.BLUE + msg + Style.RESET_ALL
+    elif color == 'yellow':
+        return Fore.YELLOW + msg + Style.RESET_ALL
+    elif color == 'red':
+        return Fore.RED + msg + Style.RESET_ALL
+    else:
+        return Fore.WHITE + msg + Style.RESET_ALL
 
 def load_all_profiles(file_path:str) -> dict:
     """Loads all user profiles from a JSON file."""
     if not os.path.exists(file_path):
-        return {}
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump({}, f) # Create an empty JSON file if it doesn't exist
+        logging.warning(parse_loggings(f"{file_path} Doesn't Exsist. Creating an Empty File.", 'yellow'))
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             profiles = json.load(f)
             if not isinstance(profiles, dict):
-                logging.warning(f"{Fore.YELLOW}Content of {file_path} is not a dictionary. Initializing empty profiles.{Style.RESET_ALL}")
+                logging.warning(parse_loggings(f"Content of {file_path} is not a dictionary. Initializing empty profiles.", 'yellow'))
                 return {}
             return profiles
     except json.JSONDecodeError as e:
-        logging.error(f"{Fore.RED}Error decoding JSON from {file_path}: {e}. File might be corrupted.{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Error decoding JSON from {file_path}: {e}. File might be corrupted.", 'red'))
         return {}
     except IOError as e:
-        logging.error(f"{Fore.RED}IO Error reading profiles from {file_path}: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"IO Error reading profiles from {file_path}: {e}", 'red'))
         return {}
 
 def save_all_profiles(profiles_data: dict, shared_state: SharedState):
     """Saves all user profiles to a JSON file."""
     file_path = shared_state.profiles_path
     try:
+        # Ensure the file itself exists before writing.
+        # This handles cases where the file might be deleted after __post_init__ runs.
+        if not os.path.exists(file_path): # Added this check
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump({}, f) # Create an empty JSON file if it doesn't exist
+            logging.info(parse_loggings(f"Re-created missing profiles file before saving: {file_path}", 'blue'))
+
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(profiles_data, f, indent=4)
     except IOError as e:
-        logging.error(f"{Fore.RED}Error saving profiles to {file_path}: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Error saving profiles to {file_path}: {e}", 'red'))
     except Exception as e:
-        logging.error(f"{Fore.RED}An unexpected error occurred while saving profiles: {e}{Style.RESET_ALL}") 
+        logging.error(parse_loggings(f"An unexpected error occurred while saving profiles: {e}", 'red')) 
 
 def save_chat(history: list, filename: str, shared_state: SharedState) -> tuple[gr.Dropdown, gr.Textbox]:
     """Saves the current chat history to a JSON file."""
     if not history:
-        logging.warning(f"{Fore.YELLOW}Attempted to save empty chat history.{Style.RESET_ALL}")
+        logging.warning(parse_loggings(f"Attempted to save empty chat history.", 'yellow'))
         return gr.Dropdown(), gr.Textbox()
     
     basename = filename.strip()
@@ -110,12 +130,12 @@ def save_chat(history: list, filename: str, shared_state: SharedState) -> tuple[
         with open(filepath, 'w', encoding='utf-8') as f:
             content = [{'role': 'system', 'content': shared_state.system_prompt}] + history
             json.dump(content, f, indent=4)
-        logging.info(f"{Fore.GREEN}Chat saved to: {filepath}{Style.RESET_ALL}")
+        logging.info(parse_loggings(f"Chat saved to: {filepath}", 'green'))
     except IOError as e:
-        logging.error(f"{Fore.RED}Error saving chat to {filepath}: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Error saving chat to {filepath}: {e}", 'red'))
         return gr.Dropdown(), gr.Textbox(f"Error saving chat: {e}")
     except Exception as e:
-        logging.error(f"{Fore.RED}An unexpected error occurred while saving chat: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"An unexpected error occurred while saving chat: {e}", 'red'))
         return gr.Dropdown(), gr.Textbox(f"Unexpected error saving chat: {e}")
     
     updated_chats = [f for f in os.listdir(shared_state.chats_dir) if f.endswith('json')]
@@ -124,7 +144,7 @@ def save_chat(history: list, filename: str, shared_state: SharedState) -> tuple[
 def load_chat(filename: str, shared_state: SharedState) -> tuple[list, list, SharedState, gr.Textbox]:
     """Loads a chat history from a JSON file."""
     if not filename:
-        logging.info(f"{Fore.BLUE}No chat filename provided for loading.{Style.RESET_ALL}")
+        logging.info(parse_loggings(f"No chat filename provided for loading.", 'yellow'))
         return [], [], shared_state, gr.Textbox('')
     
     filepath = os.path.join(shared_state.chats_dir, filename)
@@ -133,15 +153,15 @@ def load_chat(filename: str, shared_state: SharedState) -> tuple[list, list, Sha
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             history = json.load(f)
-        logging.info(f"{Fore.GREEN}Chat loaded from: {filepath}{Style.RESET_ALL}")
+        logging.info(parse_loggings(f"Chat loaded from: {filepath}", 'green'))
     except json.JSONDecodeError as e:
-        logging.error(f"{Fore.RED}Empty or corrupted JSON file: {filepath}. Error: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Empty or corrupted JSON file: {filepath}. Error: {e}", 'red'))
         return [], [], shared_state, gr.Textbox(f"Error: Corrupted chat file '{filename}'.")
     except IOError as e:
-        logging.error(f"{Fore.RED}Error loading chat from {filepath}: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Error loading chat from {filepath}: {e}", 'red'))
         return [], [], shared_state, gr.Textbox(f"Error loading chat: {e}")
     except Exception as e:
-        logging.error(f"{Fore.RED}An unexpected error occurred while loading chat: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"An unexpected error occurred while loading chat: {e}", 'red'))
         return [], [], shared_state, gr.Textbox(f"Unexpected error loading chat: {e}")
             
     # Handle system prompt if present in loaded history
@@ -159,23 +179,31 @@ def delete_chat(filename: str, shared_state: SharedState) -> tuple[list, list, g
     if os.path.exists(filepath):
         try:
             os.remove(filepath)
-            logging.info(f"{Fore.GREEN}Chat file deleted: {filepath}{Style.RESET_ALL}")
+            logging.info(parse_loggings(f"Chat file deleted: {filepath}", 'green'))
         except OSError as e:
-            logging.error(f"{Fore.RED}Error deleting chat file {filepath}: {e}{Style.RESET_ALL}")
+            logging.error(parse_loggings(f"Error deleting chat file {filepath}: {e}", 'red'))
             return [], [], gr.Dropdown(), gr.Textbox(f"Error deleting chat: {e}")
     else:
-        logging.warning(f"{Fore.YELLOW}Attempted to delete non-existent chat file: {filepath}{Style.RESET_ALL}")
+        logging.warning(parse_loggings(f"Attempted to delete non-existent chat file: {filepath}", 'red'))
         
     updated_chats = [f for f in os.listdir(shared_state.chats_dir) if f.endswith('json')]
     # Ensure the dropdown value is valid, or set to None if no chats remain
     dropdown_value = updated_chats[0] if updated_chats else None
     return [], [], gr.Dropdown(updated_chats, value=dropdown_value), gr.Textbox('')
+
+def get_chat_files(shared_state_gr: gr.State) -> list[str]:
+    """Helper to get chat files from the SharedState's chats_dir."""
+    # Access the actual SharedState object via .value
+    shared_state = shared_state_gr.value
+    if os.path.exists(shared_state.chats_dir):
+        return [f for f in os.listdir(shared_state.chats_dir) if f.endswith('json')]
+    return []
     
 def simple_text_splitter(text: str, chunk_size: int = 256, chunk_overlap: int = 64) -> list[str]:
     """Splits text into chunks by character count with overlap."""    
     chunks = []
     if chunk_size <= chunk_overlap:
-        logging.warning("Chunk size must be greater than chunk overlap for meaningful splitting.")
+        logging.warning(parse_loggings("Chunk size must be greater than chunk overlap for meaningful splitting.", 'yellow'))
         return [text] # Return original text as a single chunk
     
     for i in range(0, len(text), chunk_size - chunk_overlap):
@@ -225,7 +253,7 @@ def embed_pdfs(files: list, shared_state: SharedState, chunk_size: int, chunk_ov
     try:
         ollama.show(shared_state.emb_model)
     except ollama.ResponseError as e:
-        logging.error(f"{Fore.RED}Embedding model '{shared_state.emb_model}' not found or accessible: {e}{Style.RESET_ALL}")
+        logging.error(parse_loggings(f"Embedding model '{shared_state.emb_model}' not found or accessible: {e}", 'red'))
         return gr.Textbox(f"Error: Embedding model '{shared_state.emb_model}' not found or accessible. Please download it via Settings.")
     
     for f_obj in files:
@@ -255,14 +283,14 @@ def embed_pdfs(files: list, shared_state: SharedState, chunk_size: int, chunk_ov
                         )
                         chunk_count += 1
                     except ollama.ResponseError as e:
-                            logging.error(f"Ollama embedding error for chunk: {e}")
+                            logging.error(parse_loggings(f"Ollama embedding error for chunk: {e}", 'red'))
                             return gr.Textbox(f"Status: Ollama embedding error. Check embedding model and server. Error: {e}")
                     except Exception as e:
-                        logging.error(f"Error embedding chunk {unique_id}: {e}")
+                        logging.error(parse_loggings(f"Error embedding chunk {unique_id}: {e}", 'red'))
                         return gr.Textbox(f"Status: Error embedding chunk. Details in logs. Error: {e}")
                 
         except Exception as e:
-            logging.error(f"Error processing PDF file {f_obj.name}: {e}")
+            logging.error(parse_loggings(f"Error processing PDF file {f_obj.name}: {e}", 'red'))
             return gr.Textbox(f"Status: Error processing PDF file '{os.path.basename(f_obj.name)}'. Error: {e}")        
     return gr.Textbox(f'Status: Embedded PDFs in ChromaDB.'
                        f'\nTotal Characters Processed: {char_count}'
@@ -276,7 +304,7 @@ def ollama_response(message: str, history: list, shared_state: SharedState):
     try:
         ollama.show(shared_state.chat_model)
     except ollama.ResponseError as e:
-        logging.error(f"Chat model '{shared_state.chat_model}' not found or accessible: {e}")
+        logging.error(parse_loggings(f"Chat model '{shared_state.chat_model}' not found or accessible: {e}", 'red'))
         yield "", history, history
         return gr.Textbox(f"Error: Chat model '{shared_state.chat_model}' not found or accessible. Please download it via Settings.")
     
@@ -293,7 +321,7 @@ def ollama_response(message: str, history: list, shared_state: SharedState):
                 for doc_list in results['documents']:
                     context += ' '.join(doc_list) + '\n'
             else:
-                logging.warning(f"{Fore.YELLOW}No relevant documents found for RAG query.{Style.RESET_ALL}")
+                logging.warning(parse_loggings(f"No relevant documents found for RAG query.", 'yellow'))
         
             rag_system_prompt = (f"{system_prompt}\n\nBased only on the following context, answer the question." 
                                 f"If the answer is not in the context, state that you cannot answer based on the provided information."
@@ -302,13 +330,13 @@ def ollama_response(message: str, history: list, shared_state: SharedState):
             user_message = f'Query: {message}'
             messages = ([{'role':'system', 'content': rag_system_prompt}] + 
                         history + [{'role':'user', 'content':user_message}])
-            logging.info(f"{Fore.BLUE}RAG enabled: Querying with context.{Style.RESET_ALL}")
+            logging.info(parse_loggings(f"RAG enabled: Querying with context.", 'blue'))
         except ollama.ResponseError as e:
-            logging.error(f"{Fore.RED}Ollama embedding error during RAG query: {e}{Style.RESET_ALL}")
+            logging.error(parse_loggings(f"Ollama embedding error during RAG query: {e}", 'red'))
             yield "", history, history
             return gr.Textbox(f"Error: Ollama embedding error during RAG. Check embedding model and server. Error: {e}")
         except Exception as e:
-            logging.error(f"Error during RAG process: {e}")
+            logging.error(parse_loggings(f"Error during RAG process: {e}", 'red'))
             yield "", history, history
             return gr.Textbox(f"Error: An error occurred during RAG. Details in logs. Error: {e}")
 
@@ -382,7 +410,9 @@ def clear_rag_embeddings() -> gr.Textbox:
     current_count = chroma_collection.count()
     if current_count > 0:
         try:
-            chroma_collection.delete(where={})
+            all_ids = chroma_collection.get(limit=chroma_collection.count())['ids']
+            if all_ids:
+                chroma_collection.delete(ids=all_ids)
             logging.info(f"{Fore.GREEN}RAG embeddings cleared! Deleted {current_count} documents.{Style.RESET_ALL}")
             return gr.Textbox(f"RAG embeddings cleared! Total documents: {chroma_collection.count()}")
         except Exception as e:
@@ -416,20 +446,19 @@ def pull_ollama_model(name: str) -> tuple[gr.Dropdown, gr.Dropdown, gr.Dropdown,
                 gr.Dropdown(available_ollama_models()), gr.Textbox("Model name cannot be empty."))
     command = ['ollama', 'pull', name]
     try:
-        logging.info(f"Attempting to pull Ollama model: {name}")
+        logging.info(parse_loggings(f"Attempting to pull Ollama model: {name}", 'blue'))
         process = subprocess.run(command, check=True, capture_output=True, text=True)
-        msg = f'{Fore.GREEN}Successfully Pulled {name}. Output: {process.stdout}{Style.RESET_ALL}'
-        logging.info(msg)
+        msg = f'Successfully Pulled {name}. Output: {process.stdout}'
+        logging.info(parse_loggings(msg, 'green'))
     except subprocess.CalledProcessError as e:
-        error_msg = f'{Fore.RED}Failed to pull model {name}. Error: {e.stderr}{Style.RESET_ALL}'
-        logging.error(error_msg)
-        msg = error_msg
+        msg = f'Failed to pull model {name}. Error: {e.stderr}'
+        logging.error(parse_loggings(msg, 'red'))
     except FileNotFoundError:
-        msg = f'{Fore.RED}Ollama command not found. Please ensure Ollama is installed and in your PATH.{Style.RESET_ALL}'
-        logging.error(msg)
+        msg = f'Ollama command not found. Please ensure Ollama is installed and in your PATH.'
+        logging.error(parse_loggings(msg, 'red'))
     except Exception as e:
-        msg = f'{Fore.RED}An unexpected error occurred while pulling model: {e}{Style.RESET_ALL}'
-        logging.error(msg)
+        msg = f'An unexpected error occurred while pulling model: {e}'
+        logging.error(parse_loggings(msg, 'red'))
 
     return (gr.Dropdown(available_ollama_models()), gr.Dropdown(available_ollama_models()), 
              gr.Dropdown(available_ollama_models()), gr.Textbox(msg))
@@ -441,20 +470,19 @@ def remove_ollama_model(name: str) -> tuple[gr.Dropdown, gr.Dropdown, gr.Dropdow
                 gr.Dropdown(available_ollama_models()), gr.Textbox("Model name cannot be empty."))
     command = ['ollama', 'rm', name]
     try:
-        logging.info(f"{Fore.BLUE}Attempting to remove Ollama model: {name}{Style.RESET_ALL}")
+        logging.info(parse_loggings(f"Attempting to remove Ollama model: {name}", 'blue'))
         process = subprocess.run(command, check=True, capture_output=True, text=True)
-        msg = f'{Fore.GREEN}Successfully Removed {name}. Output: {process.stdout}{Style.RESET_ALL}'
-        logging.info(msg)   
+        msg = f'Successfully Removed {name}. Output: {process.stdout}'
+        logging.info(parse_loggings(msg, 'green'))   
     except subprocess.CalledProcessError as e:
-        error_msg = f'{Fore.RED}Failed to remove model {name}. Error: {e.stderr}{Style.RESET_ALL}'
-        logging.error(error_msg)
-        msg = error_msg
+        msg = f'Failed to remove model {name}. Error: {e.stderr}'
+        logging.error(parse_loggings(msg, 'red'))
     except FileNotFoundError:
         msg = f'{Fore.RED}Ollama command not found. Please ensure Ollama is installed and in your PATH.{Style.RESET_ALL}'
-        logging.error(msg)
+        logging.error(parse_loggings(msg, 'red'))
     except Exception as e:
         msg = f'{Fore.RED}An unexpected error occurred while removing model: {e}{Style.RESET_ALL}'
-        logging.error(msg)
+        logging.error(parse_loggings(msg, 'red'))
         
     return (gr.Dropdown(available_ollama_models()), gr.Dropdown(available_ollama_models()), 
              gr.Dropdown(available_ollama_models()), gr.Textbox(msg))
@@ -477,7 +505,7 @@ def save_profile(shared_state: SharedState, profile_name: str) -> tuple[gr.Dropd
     }
     all_profiles[profile_name] = data
     save_all_profiles(all_profiles, shared_state)
-    logging.info(f"{Fore.GREEN}Profile '{profile_name}' saved.{Style.RESET_ALL}")
+    logging.info(parse_loggings(f"Profile '{profile_name}' saved.", 'green'))
     return (gr.Dropdown(list(all_profiles.keys()), value=profile_name),
             gr.Textbox(f'Profile {profile_name} saved successfully.'))
 
@@ -495,10 +523,11 @@ def load_profile(shared_state: SharedState, profile_name: str) -> tuple[SharedSt
         shared_state.temperature = profile_data.get('temperature', shared_state.temperature)
         shared_state.top_k = profile_data.get('top_k', shared_state.top_k)
         shared_state.top_p = profile_data.get('top_p', shared_state.top_p)
-        msg = f'{Fore.GREEN}Loaded Profile "{profile_name}{Style.RESET_ALL}".'
-        logging.info(msg)
+        msg = f'Loaded Profile "{profile_name}".'
+        logging.info(parse_loggings(msg, 'green'))
     else:
-        msg = f'{Fore.RED}Error: Profile {profile_name} not found.{Style.RESET_ALL}'
+        msg = f'Error: Profile {profile_name} not found.'
+        logging.error(parse_loggings(msg, 'red'))
     return shared_state, gr.Textbox(msg)
 
 def delete_profile(shared_state: SharedState, profile_name: str) -> tuple[gr.Dropdown, gr.Textbox, gr.Textbox]:
@@ -515,16 +544,96 @@ def delete_profile(shared_state: SharedState, profile_name: str) -> tuple[gr.Dro
         del all_profiles[profile_name]
 
         save_all_profiles(all_profiles, shared_state)
-        status_msg = f"{Fore.GREEN}Profile '{profile_name}' deleted successfully.{Style.RESET_ALL}"
-        logging.info(status_msg)
+        status_msg = f"Profile '{profile_name}' deleted successfully."
+        logging.info(parse_loggings(status_msg, 'green'))
     else:
-        status_msg = f"{Fore.RED}Error: Profile '{profile_name}' not found. Nothing to delete.{Style.RESET_ALL}"
-        logging.warning(status_msg)
+        status_msg = f"Error: Profile '{profile_name}' not found. Nothing to delete."
+        logging.warning(parse_loggings(status_msg, 'red'))
     
     return (gr.Dropdown(choices=list(all_profiles.keys()), value=None),
             gr.Textbox(''),
            gr.Textbox(status_msg, visible=True))
 
+def get_profile_names(shared_state_gr: gr.State) -> list[str]:
+    """Helper to get profile names from the SharedState's profiles_path."""
+    # Access the actual SharedState object via .value
+    shared_state = shared_state_gr.value
+    # Use your existing load_all_profiles function
+    profiles = load_all_profiles(shared_state.profiles_path)
+    return list(profiles.keys())
+
+def get_total_nvidia_gpu_memory() -> float | None:
+    """
+    Retrieves the total GPU memory in MiB for the first NVIDIA GPU using nvidia-smi.
+    Returns None if nvidia-smi is not available or an error occurs.
+    """
+    try:
+        # Using -q -d memory.total -o default for cleaner output on Windows
+        command = ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"]
+        output = subprocess.check_output(command, encoding='utf-8').strip()
+        # Expecting output like "X MiB" or "X" if no units.
+        # Splitting by newline and taking the first line for the first GPU
+        memory_str = output.split('\n')[0].strip()
+        return int(memory_str) / 1024 # nvidia-smi usually reports in MiB by default for memory.total
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
+        logging.error(parse_loggings(f"Failed to get GPU memory: {e}", 'red'))
+        logging.info(parse_loggings("Please ensure NVIDIA drivers are installed and nvidia-smi is in your PATH.", 'blue'))
+        return None
+
+def get_ollama_model_size_gb(model_name: str) -> float | None:
+    """
+    Fetches the size of a specific Ollama model in GB.
+    Returns None if the model is not found or an error occurs.
+    """
+    try:
+        models_info = ollama.list()
+        for model_data in models_info.get('models', []): # Use .get with default empty list
+            if model_data.get('model') == model_name:
+                size_bytes = model_data.get('size')
+                if size_bytes is not None:
+                    return round(size_bytes / (1024)**3, 2)
+                else:
+                    logging.warning(parse_loggings(f"Model '{model_name}' found, but 'size' information is missing.", 'yellow'))
+                    return None
+        logging.warning(parse_loggings(f"Model '{model_name}' not found in Ollama list.", 'yellow'))
+        return None
+    except Exception as e:
+        logging.error(parse_loggings(f"Error fetching Ollama model list: {e}", 'red'))
+        return None
+
+def get_memory_status(model_name: str) -> gr.Textbox:
+    """
+    Checks model's VRAM requirement against total GPU memory and provides status.
+    Handles various error scenarios gracefully for Gradio display.
+    """
+    total_gpu_size_gb = get_total_nvidia_gpu_memory()
+
+    if total_gpu_size_gb is None:
+        return gr.Textbox("Error: Could not determine GPU memory. Is `nvidia-smi` installed and in PATH?\u2757",
+                           label="Status", interactive=False, visible=True,
+                           elem_classes="error-text") # Add CSS class for red text
+
+    model_size_gb = get_ollama_model_size_gb(model_name)
+
+    if model_size_gb is None:
+        return gr.Textbox(f"Error: Could not determine size for model '{model_name}'. Is Ollama running and model downloaded?\u2757",
+                           label="Status", interactive=False, visible=True,
+                           elem_classes="error-text")
+
+    status_message = ""
+    size_display = f"{model_size_gb:.2f} GB / {total_gpu_size_gb:.2f} GB (GPU Total)"
+
+    if model_size_gb <= total_gpu_size_gb:
+        status_message = "No offloading required. Model fits in VRAM.\u2705"
+        #color_class = "green-text"
+    else:
+        offload_amount_gb = model_size_gb - total_gpu_size_gb
+        status_message = f"Offloading likely required. Model exceeds VRAM by {offload_amount_gb:.2f} GB.\u274c"
+        #color_class = "red-text"
+        
+    return gr.Textbox(f"Model Size: {size_display}\nStatus: {status_message}",
+                       label="VRAM Compatibility", interactive=False, visible=True)
+    
 # --- Gradio UI Class ---
 
 class ChatUI:
@@ -548,7 +657,7 @@ class ChatUI:
             gr.Markdown("### Chat Interface")
             with gr.Row():
                 self.chats_dropdown = gr.Dropdown(
-                    choices=[f for f in os.listdir('chats') if f.endswith('json')],
+                    choices=get_chat_files(self.shared_state),
                     label='Chat Files',
                     interactive=True,
                     value=None
@@ -603,15 +712,19 @@ class ChatUI:
         with gr.Column(visible=False) as self.settings_page:
             gr.Markdown("### Application Settings")
             with gr.Accordion('Model Selection & Paths', open=False):
-                self.chat_models_dropdown = gr.Dropdown(
-                    available_ollama_models(),
-                    label='Choose Chat Model',
-                    interactive=True,
-                )
+                with gr.Row():
+                    self.chat_models_dropdown = gr.Dropdown(
+                        available_ollama_models(),
+                        label='Choose Chat Model',
+                        interactive=True,
+                        value=None,
+                    )
+                    self.vram_info_dis = gr.Textbox(label='VRAM Information', interactive=False, lines=2)
                 self.emb_models_dropdown = gr.Dropdown(
                     available_ollama_models(),
                     label='Choose Embedding Model',
                     interactive=True,
+                    value=None,
                 )
 
                 self.chats_dir_input = gr.Textbox(value = 'chats', label='Chats Directory', interactive=True)
@@ -653,7 +766,7 @@ class ChatUI:
                 
                 with gr.Row():
                     self.profiles_dropdown = gr.Dropdown(
-                        choices=list(load_all_profiles('profiles.json')),
+                        choices=get_profile_names(self.shared_state),
                         label='Available Profiles',
                         interactive=True
                     )
@@ -750,6 +863,11 @@ class ChatUI:
         )
         
         # Settings Page Events
+        self.chat_models_dropdown.change(
+            get_memory_status,
+            [self.chat_models_dropdown],
+            [self.vram_info_dis]
+        )
         self.update_settings_btn.click(
             update_settings,
             inputs=[self.shared_state, self.chat_models_dropdown, self.emb_models_dropdown,
