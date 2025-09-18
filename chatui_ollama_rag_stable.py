@@ -28,9 +28,9 @@ class SharedState:
         self.system_prompt = 'You are a helpful assistant.'
         
         self.chats_dir = 'chats'
-        
+        self.chromadb_dir = './chroma_db'
+        self.chromadb_col_name = 'docs'
         self.documents_text = ''
-        self.chromadb_dir = ''
         self.chunk_size = 450
         self.chunk_overlap = 45
         self.n_results = 5
@@ -44,7 +44,7 @@ class SharedState:
     def _update_model_settings(
         self,
         chat_model,
-        emb_model,
+        embed_model,
         system_prompt,
         temperature,
         top_k, 
@@ -53,18 +53,39 @@ class SharedState:
         user_name,
         assistant_name
     ):
-
+        # Keep track of the old embedding model before updating
+        old_embed_model = self.embed_model
+        rag_data_invalidated = False
+        
+        
         self.chat_model = chat_model
-        self.embed_model = emb_model
+        self.embed_model = embed_model
 
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
-        self.num_ctx = int(2**(num_ctx))
+        self.num_ctx = int(num_ctx)
         self.user_name = user_name if user_name else 'N.A.'
         self.assistant_name = assistant_name if assistant_name else 'N.A.'
-    
+
+        # Check if the embedding model has changed
+        if self.embed_model != old_embed_model:
+            print("INFO: Embedding model has changed. Invalidating existing RAG data.")
+            rag_data_invalidated = True
+            
+            # 1. Clear the ChromaDB collection to remove old embeddings
+            try:
+                print(self.chromadb_dir, self.n_results)
+                client = chromadb.PersistentClient(path=self.chromadb_dir, settings=Settings(anonymized_telemetry=False))
+                # Check if collection exists before trying to delete
+                collections = [c.name for c in client.list_collections()]
+                if self.chromadb_col_name in collections:
+                    client.delete_collection(name=self.chromadb_col_name)
+                    print(f"INFO: Deleted ChromaDB collection: '{self.chromadb_col_name}'")
+
+            except Exception as e:
+                print(f"ERROR: Could not clear ChromaDB collection. Manual cleanup might be required. Error: {e}")
         
         status_dict = {
             'Chat Model': self.chat_model,
@@ -74,23 +95,27 @@ class SharedState:
             'Top-K': self.top_k,
             'Top-P': self.top_p,
             'Context Length': self.num_ctx,
-            'user_name': self.user_name,
-            'assistant_name': self.assistant_name
+            'User name': self.user_name,
+            'Assistant name': self.assistant_name,
+            'Chroma Collection cleared': rag_data_invalidated,
         }
         
         max_key_length = max(len(k) for k in status_dict.keys())
         status_output = 'Updated Settings:\n' + '-'*100 + '\n'
         for k, v in status_dict.items():
             status_output += f'{k:<{max_key_length+10}} {v}\n'
+
         print('INFO: Updated Model Settings.')
         return self, f'```\n{status_output}\n```'
 
-    def _update_rag_settings(self, n_results, chromadb_dir):
+    def _update_rag_settings(self, n_results, chromadb_dir, chromadb_col_name):
         self.n_results = n_results
         self.chromadb_dir = chromadb_dir
+        self.chromadb_col_name = chromadb_col_name
         status_dict = {
+            'chromadb_dir': self.chromadb_dir,
+            'chromadb_col_name': self.chromadb_col_name,
             'n_results': self.n_results,
-            'chromadb_dir': self.chromadb_dir
         }
         max_key_length = max(len(k) for k in status_dict.keys())
         status_output = 'Updated Settings:\n' + '-'*100 + '\n'
@@ -99,16 +124,17 @@ class SharedState:
         print('INFO: Updated Model Settings.')
         return self, f'```\n{status_output}\n```'
     
-    def _toggle_rag_flag(self, rag_flag_in):
-        self.rag_flag = rag_flag_in
-        if self.rag_flag is True:
-            print(f'INFO: RAG Enabled')
-        return self
+    def _handle_context_mode(self, choice):
+        self.ddgs_flag = False
+        self.rag_flag = False
 
-    def _toggle_ddgs_flag(self, ddgs_flag_in):
-        self.ddgs_flag = ddgs_flag_in
-        if self.ddgs_flag is True:
-            print(f'INFO: Duckduckgo search Enabled')
+        if choice == "RAG":
+            self.rag_flag = True
+            print('INFO: RAG Enabled')
+        elif choice == "DuckDuckGo Search":
+            self.ddgs_flag = True
+            print('INFO: DuckDuckGo search Enabled')
+            
         return self
     
 class FileManager:
@@ -342,16 +368,7 @@ class RecursiveSplitter:
         return chunks
 
 class ParentChildsplitter:
-    def __init__(
-        self,
-        chromdb_dir,
-        collection_name = 'parent_child_docs'
-        ) -> None:
-        if chromdb_dir:
-            client = chromadb.PersistentClient(path=chromdb_dir, settings = Settings(anonymized_telemetry=False))
-        else:
-            client = chromadb.Client(settings = Settings(anonymized_telemetry=False))
-        self.chroma_collection = client.get_or_create_collection(name = collection_name)
+    def __init__(self):
         self.parent_docs_store = {}
         self.text_splitter = RecursiveSplitter()
         
@@ -367,9 +384,12 @@ class ParentChildsplitter:
         return total_chunks_size // (len(parent_chunks))
          
     def _ingest_child_docs(self, state):
-        """
-        Splits parent chunks into child chunks, embeds them, and stores them in ChromaDB.
-        """
+        if state.chromadb_dir:
+            client = chromadb.PersistentClient(path=state.chromadb_dir, settings = Settings(anonymized_telemetry=False))
+        else:
+            client = chromadb.Client(settings = Settings(anonymized_telemetry=False))
+        self.chroma_collection = client.get_or_create_collection(name = state.chromadb_col_name)
+        
         if not self.parent_docs_store:
             print('ERROR: No parent chunks found. Ingestion cannot proceed.')
             raise ValueError('\nParent chunks were not created. Please ingest a document first.')
@@ -418,9 +438,9 @@ class ParentChildsplitter:
             metadata = {
             'Number of Parent Chunks': num_parent_chunks,
             'Number of Child Chunks': num_child_chunks,
-            'Parent Ingestion Time': round(parent_pro_time, 2),
-            'Child Ingestion Time': round(child_pro_time, 2),
-            'Total Ingestion Time': round(total_pro_time, 2),
+            'Parent Ingestion Time': f'{round(parent_pro_time, 2)} sec',
+            'Child Ingestion Time': f'{round(child_pro_time, 2)} sec',
+            'Total Ingestion Time': f'{round(total_pro_time, 2)} sec',
             'Average Parent Chunk Size': round(avg_parent_size, 2),
             'Average Child Chunk Size': round(avg_child_size, 2),
             'Child to Parents Chunk Ratio': round(num_child_chunks / num_parent_chunks, 2)
@@ -434,10 +454,10 @@ class ParentChildsplitter:
             
         except Exception as e:
             print(f'ERROR: A critical error occurred during document ingestion: {e}')
-            return 'An error occured during document ingestion.'
+            return '```An error occured during document ingestion.```'
         
     def _retrieve_docs(self, query, state):
-        if not self.parent_docs_store:
+        if not self.parent_docs_store or self.chroma_collection.count() == 0:
             print("ERROR: No parent documents are stored in memory. Retrieval will fail.")
             return ''
         
@@ -448,7 +468,7 @@ class ParentChildsplitter:
                 n_results=state.n_results,
                 include=['metadatas']
             )
-
+            
             retrieved_parent_ids = set()
             if query_results['metadatas']:
                 for metadata_lists in query_results['metadatas']:
@@ -520,7 +540,7 @@ class MapReduceSummarizer:
             print('ERROR: Read document first.')
             raise ValueError('No document was read.')
         print('INFO: Starting summarization...')
-        chunks = self.text_splitter.split_text(state.documents_text[:2000], chunk_size, chunk_overlap)
+        chunks = self.text_splitter.split_text(state.documents_text, chunk_size, chunk_overlap)
         
         chunk_summaries = []
         total_chunk_len = 0
@@ -682,7 +702,7 @@ class GenPipe:
     def __init__(self):
         self.text_ingester = ParentChildsplitter()
         self.web_agent = WebAgent()
-        
+
     def _ingest_docs(self, state):
         # want to ensure that parent doc store (and vectorstore if in memory) is available for retrieval
         summary = self.text_ingester._ingest_documents(state)
@@ -709,13 +729,13 @@ class GenPipe:
         else:
             system_prompt = state.system_prompt            
         
-        if state.user_name:
+        if state.user_name and state.user_name != 'N.A.':
             msg = f'{state.user_name}: ' + msg
         
         if context:
             msg += '\nContext: ' + context
         
-        if state.bot_name: 
+        if state.bot_name and state.bot_name != 'N.A.': 
             msg = msg + f'\n{state.bot_name}: '
         
         ollama_messages = (
@@ -729,7 +749,10 @@ class GenPipe:
         context = ''
         metadata = {}
         if state.rag_flag is True:
-            context = self.text_ingester._retrieve_docs(msg, state)
+            if not self.text_ingester.parent_docs_store: #or self.text_ingester.chroma_collection.count() == 0:
+                raise ValueError('No documents were ingested.')
+            else:
+                context = self.text_ingester._retrieve_docs(msg, state)
         elif state.ddgs_flag is True:
             metadata = self.web_agent._search_web_chain(msg, history, state)
             context = metadata['context']
@@ -774,14 +797,16 @@ class GenPipe:
         yield '', history, history
     
     def _regen_msg(self, history, state):
-        msg = ''
-        while(len(history)) > 0:
-            last_msg = history.pop()
-            if last_msg.get('role', '') == 'user':
-                msg = last_msg['content']
+        last_user_msg_index = -1
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].get('role', '') == 'user':
+                last_user_msg_index = i
                 break
-        if msg:
-            yield from self._ollama_response(msg, history, state)
+        
+        if last_user_msg_index != -1:
+            msg = history[last_user_msg_index]['content']
+            history_for_llm = history[:last_user_msg_index]
+            yield from self._ollama_response(msg, history_for_llm, state)
 
 class ChatUI:
     def __init__(self, state: gr.State) -> None:
@@ -792,8 +817,16 @@ class ChatUI:
         self.pdf_reader = PdfReader()
         self.gen_pipe = GenPipe()
         self.summarizer = MapReduceSummarizer()
+        
+        # initial directory checks
+        if not os.path.exists(self.state.value.chats_dir):
+            os.makedirs(self.state.value.chats_dir)
+        if not os.path.exists(self.state.value.chromadb_dir):
+            os.makedirs(self.state.value.chromadb_dir)
+        
         self._interface()
         self._events()
+        
     
     def _interface(self):
         # sidebar defintion
@@ -824,10 +857,14 @@ class ChatUI:
             )
 
             with gr.Row():
-                self.clear_msg_btn = gr.Button(value='Clear Complete Chat', interactive=True)
-                self.ddgs_flag_in = gr.Checkbox(value=False, label='Duckduckgo Search')
-                self.rag_flag_in = gr.Checkbox(value=False, label='RAG')
-                self.regen_msg_btn = gr.Button(value='Regenerate last message', interactive=True)
+                with gr.Column():
+                    self.clear_msg_btn = gr.Button(value='Clear Complete Chat', interactive=True)
+                    self.regen_msg_btn = gr.Button(value='Regenerate last message', interactive=True)
+                self.context_mode = gr.Radio(
+                    ["None", "RAG", "DuckDuckGo Search"],
+                    label="Context Mode",
+                    value="None"
+                )
 
             self.user_msg_in = gr.Textbox(
             lines=1, 
@@ -894,7 +931,7 @@ class ChatUI:
                         interactive=True,
                         value=available_models[0]
                     )
-                    self.emb_model_in = gr.Dropdown(
+                    self.embed_model_in = gr.Dropdown(
                         choices=available_models,
                         label='Carefully choose Embedding model.',
                         interactive=True,
@@ -918,15 +955,21 @@ class ChatUI:
                     self.temeprature_in = gr.Slider(minimum=0, maximum=2, step=0.05, value=1.0,label='Temperature', interactive=True)
                     self.top_k_in = gr.Slider(minimum=1, maximum=100, step=1, value=64, label='Top-K', interactive=True)
                     self.top_p_in = gr.Slider(minimum=0, maximum=1, step=0.05, value=0.95, label='Top-P', interactive=True)
-                    self.n_ctx_in = gr.Slider(minimum=10, maximum=18, step=1, value=11, label='2^(n) Context Length', interactive=True)
+                    self.n_ctx_in = gr.Number(2048, label='Context Length', interactive=True)
                     
                 self.update_model_settings_btn = gr.Button(value='Update Model Settings', size='md', interactive=True)
+                self.model_settings_page_status = gr.Markdown(value='``````', label='Settings Status', visible=True)
             with gr.Tab(label='RAG Settings'):
+                gr.Markdown('**ChromaDB settings**')
+                self.chromadb_dir_in = gr.Textbox(value='chroma_db',label='Chromadb store directory', interactive=True)
+                self.chromadb_col_name_in = gr.Textbox(value='docs',label='Chromadb store collection name', interactive=True)
+                
+                gr.Markdown('**RAG Settings**')
                 self.n_results_in = gr.Slider(0, 10, step=1, value=5, label='Number of Retrieved Results', interactive=True)
-                self.chromadb_dir_in = gr.Textbox(label='Chromadb store directory', interactive=True)
+                
 
                 self.update_rag_settings_btn = gr.Button(value='Update Rag Settings', interactive=True)
-            self.settings_page_status = gr.Markdown(value='``````', label='Settings Status', visible=True)
+                self.rag_settings_page_status = gr.Markdown(value='``````', label='Settings Status', visible=True)
     
     def _events(self):
         # sidebar events
@@ -957,16 +1000,12 @@ class ChatUI:
             [self.history, self.state],
             [self.user_msg_in, self.history, self.chatbot]
         )
-        self.ddgs_flag_in.change(
-            self.state.value._toggle_ddgs_flag,
-            [self.ddgs_flag_in],
+        self.context_mode.change(
+            self.state.value._handle_context_mode,
+            [self.context_mode],
             [self.state]
         )
-        self.rag_flag_in.change(
-            self.state.value._toggle_rag_flag,
-            [self.rag_flag_in],
-            [self.state]
-        )
+
         self.load_chat_btn.click(
             self.file_man._load_chat,
             [self.chat_drop, self.state],
@@ -1006,17 +1045,17 @@ class ChatUI:
         self.update_model_settings_btn.click(
             self.state.value._update_model_settings,
             [
-                self.chat_model_in, self.emb_model_in, 
+                self.chat_model_in, self.embed_model_in, 
                 self.system_prompt_in, self.temeprature_in,
                 self.top_k_in, self.top_p_in,
                 self.n_ctx_in, self.user_name_in, self.bot_name_in
              ],
-            [self.state, self.settings_page_status]
+            [self.state, self.model_settings_page_status]
         )
         self.update_rag_settings_btn.click(
             self.state.value._update_rag_settings,
-            [self.n_results_in, self.chromadb_dir_in],
-            [self.state, self.settings_page_status ]
+            [self.n_results_in, self.chromadb_dir_in, self.chromadb_col_name_in],
+            [self.state, self.rag_settings_page_status]
         )
     
 with gr.Blocks() as demo:
