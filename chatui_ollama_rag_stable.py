@@ -29,7 +29,7 @@ class SharedState:
         self.sum_text = ''
         
     def _model_parameters(self):
-        self.chat_model = 'hf.co/mlabonne/gemma-3-4b-it-abliterated-GGUF:Q4_K_M'
+        self.chat_model = 'gemma3:4b'
         self.embed_model = 'snowflake-arctic-embed:33m'
         self.system_prompt = 'You are a helpful assistant.'
         self.temperature = 1.0
