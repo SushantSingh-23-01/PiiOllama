@@ -30,7 +30,7 @@ class SharedState:
         
     def _model_parameters(self):
         self.chat_model = 'gemma3:4b'
-        self.embed_model = 'snowflake-arctic-embed:33m'
+        self.embed_model = 'granite-embedding:latest'
         self.system_prompt = 'You are a helpful assistant.'
         self.temperature = 1.0
         self.top_k = 64
