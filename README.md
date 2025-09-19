@@ -59,7 +59,6 @@ pip install -r requirements.txt
 
 3. Run the Application
 
-**Warning**: `chatui_ollama_rag_proto.py` (nightly version) has latest updates being made to it. Use `chatui_ollama_rag_stable.py` for smoother experience.
 ```bash
 python chatui_ollama_rag_stable.py
 ```
@@ -105,8 +104,8 @@ ollama-rag-chat-ui/
    * Additional Context & Directory settings: Document retrieval parameters and default directories can be modified here.
 
 ## 🐛 Troubleshooting
-- Most of the **ERROR** logs are displayed in terminal for more information.
-- **TO DOs** Implement error and warning logs to displayed in ui itself. 
+- Most of the **ERROR** logs are displayed in terminal for detailed information.
+- **TO DOs:** Implement error and warning logs to display in ui. 
 
 ## 🤝 Contributing
 Contributions are welcome! If you have suggestions for improvements or find bugs, please open an issue or submit a pull request.
