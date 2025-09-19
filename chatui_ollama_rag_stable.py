@@ -939,7 +939,7 @@ class ChatUI:
             gr.Markdown('## Chat')        
             with gr.Row():
                 self.chat_drop = gr.Dropdown(
-                    [f for f in os.listdir(self.state.value.chats_dir) if f.endswith('json')],
+                    [f for f in os.listdir(self.state.value.chats_dir) if f.endswith('.json')],
                     label='File to load',
                     interactive=True
                     )
@@ -984,6 +984,7 @@ class ChatUI:
                     height=150
                 )
                 self.read_pdfs_btn = gr.Button('Read PDFs', interactive=True)
+                gr.Markdown('### PDF Reading Status')
                 self.pdfs_status = gr.Markdown('``````')
             
             with gr.Tab('RAG'):
@@ -993,9 +994,9 @@ class ChatUI:
                     self.chunk_overlap_in = gr.Slider(0, 64, 45, step=1, label='Chunk Overlap', interactive=True)
                     
                 self.rag_btn = gr.Button('Preprocess', interactive=True)
-                
-                with gr.Row():
-                    self.rag_status = gr.Markdown('``````')
+
+                gr.Markdown('### RAG Document Ingestion Status')
+                self.rag_status = gr.Markdown('``````')
                 
             with gr.Tab('Summarization'):
                 gr.Markdown('### Summarizing documents.')
@@ -1016,7 +1017,7 @@ class ChatUI:
                 self.pre_sum_status = gr.Markdown('``````')
                 gr.Markdown('### Summarized Documents')
                 with gr.Group():
-                    self.sum_status = gr.Markdown('``````')
+                    self.sum_status = gr.Markdown('')
             
         with gr.Column(visible=False) as self.settings_page:
             gr.Markdown('## Settings')
