@@ -13,34 +13,52 @@ import pymupdf
 import time
 from ddgs import DDGS
 
-
 class SharedState:
     def __init__(self) -> None:
+
+        self.user_name = 'User'
+        self.bot_name = 'Assistant'
+        
+        self._model_parameters()
+        
+        self._context_parameters()
+        self._directories_parameters()
+
+        # summary settings
+        self.sum_dir = 'summaries'
+        self.sum_text = ''
+        
+    def _model_parameters(self):
         self.chat_model = 'hf.co/mlabonne/gemma-3-4b-it-abliterated-GGUF:Q4_K_M'
         self.embed_model = 'snowflake-arctic-embed:33m'
+        self.system_prompt = 'You are a helpful assistant.'
         self.temperature = 1.0
         self.top_k = 64
         self.top_p = 0.95
         self.num_ctx = 2048
-        
-        self.user_name = 'User'
-        self.bot_name = 'Assistant'
-        self.system_prompt = 'You are a helpful assistant.'
-        
-        self.chats_dir = 'chats'
-        self.chromadb_dir = './chroma_db'
-        self.chromadb_col_name = 'docs'
+    
+    def _context_parameters(self):
+        # document text placeholder
         self.documents_text = ''
+        
+        # rag parameters
         self.chunk_size = 450
         self.chunk_overlap = 45
         self.n_results = 5
+        
+        # flags
         self.rag_flag = False
         self.ddgs_flag = False
-    
-        self.sum_dir = 'summaries'
-        self.sum_text = ''
         
+        # web search settings
+        self.web_search_suggestions = False
 
+    def _directories_parameters(self):
+        self.chats_dir = 'chats'
+        self.chromadb_dir = './chroma_db'
+        self.chromadb_collection_name = 'child_docs'
+        self.parent_docs_name = 'parent_docs'
+    
     def _update_model_settings(
         self,
         chat_model,
@@ -74,15 +92,15 @@ class SharedState:
             print("INFO: Embedding model has changed. Invalidating existing RAG data.")
             rag_data_invalidated = True
             
-            # 1. Clear the ChromaDB collection to remove old embeddings
+            # Clear the ChromaDB collection to remove old embeddings
             try:
                 print(self.chromadb_dir, self.n_results)
                 client = chromadb.PersistentClient(path=self.chromadb_dir, settings=Settings(anonymized_telemetry=False))
                 # Check if collection exists before trying to delete
                 collections = [c.name for c in client.list_collections()]
-                if self.chromadb_col_name in collections:
-                    client.delete_collection(name=self.chromadb_col_name)
-                    print(f"INFO: Deleted ChromaDB collection: '{self.chromadb_col_name}'")
+                if self.chromadb_collection_name in collections:
+                    client.delete_collection(name=self.chromadb_collection_name)
+                    print(f"INFO: Deleted ChromaDB collection: '{self.chromadb_collection_name}'")
 
             except Exception as e:
                 print(f"ERROR: Could not clear ChromaDB collection. Manual cleanup might be required. Error: {e}")
@@ -107,21 +125,37 @@ class SharedState:
 
         print('INFO: Updated Model Settings.')
         return self, f'```\n{status_output}\n```'
-
-    def _update_rag_settings(self, n_results, chromadb_dir, chromadb_col_name):
+    
+    def _update_context_settings(
+        self,
+        n_results,
+        web_search_suggestions,
+        chats_dir,
+        chromadb_dir,
+        chromadb_collection_name,
+        parent_docs_name,
+    ):
         self.n_results = n_results
+        self.web_search_suggestions = web_search_suggestions
+        self.chats_dir = chats_dir
         self.chromadb_dir = chromadb_dir
-        self.chromadb_col_name = chromadb_col_name
+        self.chromadb_collection_name = chromadb_collection_name
+        self.parent_docs_name = parent_docs_name
+        
         status_dict = {
-            'chromadb_dir': self.chromadb_dir,
-            'chromadb_col_name': self.chromadb_col_name,
-            'n_results': self.n_results,
+            'n_results' : n_results,
+            'web_search_suggestions' : web_search_suggestions,
+            'chats_dir' : chats_dir,
+            'chromadb_dir' : chromadb_dir,
+            'chromadb_collection_name' : chromadb_collection_name,
+            'parent_docs_name' : parent_docs_name, 
         }
+        
         max_key_length = max(len(k) for k in status_dict.keys())
         status_output = 'Updated Settings:\n' + '-'*100 + '\n'
         for k, v in status_dict.items():
             status_output += f'{k:<{max_key_length+10}} {v}\n'
-        print('INFO: Updated Model Settings.')
+        print('INFO: Updated Context Settings.')
         return self, f'```\n{status_output}\n```'
     
     def _handle_context_mode(self, choice):
@@ -140,26 +174,30 @@ class SharedState:
 class FileManager:
     def _load_chat(self, filename, state):
         history = []
-        
-        # ensure chats folder exsists
-        os.makedirs(state.chats_dir, exist_ok=True)
-        filepath = os.path.join(state.chats_dir, filename.strip())
-        
-        with open(filepath, 'r', encoding='utf-8') as f:
-            history = json.load(f)
-        
-        if history[0].get('role', []) == 'system':
-            state.sp = history[0]['content']
-            history = history[1:]
-        print(f'INFO: Loaded chat {filename}', 'i')
-        return history, history, state, gr.Textbox(filename)
+        try:
+            # ensure chats folder exsists
+            os.makedirs(state.chats_dir, exist_ok=True)
+            filepath = os.path.join(state.chats_dir, filename.strip())
+            
+            with open(filepath, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+            
+            if history[0].get('role', []) == 'system':
+                state.system_prompt = history[0]['content']
+                history = history[1:]
+            print(f'INFO: Loaded chat {filename}')
+            return history, history, state, gr.Textbox(filename)
+        except json.JSONDecodeError as e:
+            print(f'ERROR: Failed to load chat. The chat maybe corrupted.')
+        except Exception as e:
+            print(f'ERROR: Error occured trying to load the file: {e}')
     
     def _save_chat(self, filename, history, state):
         '''
         Save chat files in JSON format.
         '''
         if not history:
-            print('WARNING: Trying to save empty chat history.', 'w')
+            print('WARNING: Trying to save empty chat history.')
             return gr.Dropdown(), gr.Textbox()
         
         # remove trailing whitespaces 
@@ -181,7 +219,7 @@ class FileManager:
         
         with open(filepath, 'w', encoding='utf-8') as f:
             # prepend system prompt to history
-            content = [{'role': 'system', 'content': state.sp}] + history
+            content = [{'role': 'system', 'content': state.system_prompt}] + history
             json.dump(content, f, indent=4)
         print(f'INFO: Saved Chat successfully at: {filepath}')
         
@@ -369,10 +407,52 @@ class RecursiveSplitter:
 
 class ParentChildsplitter:
     def __init__(self):
-        self.parent_docs_store = {}
         self.text_splitter = RecursiveSplitter()
+        self.chroma_client = None
+        self.parent_docs_store = {}
+
+    def _save_parent_docs(self, state):
+        basename = state.parent_docs_name.strip()
+        if not basename:
+            now = datetime.now()
+            time_str = now.strftime('%Y-%m-%d-%H-%M-%S')
+            basename = f'Parent_{time_str}'
         
+        # ensure the extension in json
+        if not basename.endswith('json'):
+            basename += '.json'
+            
+        # ensure chats folder exsists
+        os.makedirs(state.chromadb_dir, exist_ok=True)
+        filepath = os.path.join(state.chromadb_dir, basename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(self.parent_docs_store, f, indent=4)
+        print(f'INFO: Saved parent document store successfully at: {filepath}')
+    
+    def _load_parent_docs(self, state):
+        try:
+            filename = state.parent_dir_name
+            # ensure chats folder exsists
+            os.makedirs(state.chromadb_dir, exist_ok=True)
+            filepath = os.path.join(state.chromadb_dir, filename.strip())
+            
+            with open(filepath, 'r', encoding='utf-8') as f:
+                self.parent_doc_store = json.load(f)
+                
+            print(f'INFO: Loaded parent document store {filename}')
+    
+        except json.JSONDecodeError as e:
+            print(f'ERROR: Failed to load Parent document store. The chat maybe corrupted.')
+        except Exception as e:
+            print(f'ERROR: Error occured trying to load the file: {e}')
+
+    
     def _ingest_parent_docs(self, state):
+        # load parent documents store
+        if state.chromadb_dir:
+            self._load_parent_docs(state)
+        
         parent_chunks = self.text_splitter.split_text(state.documents_text, state.chunk_size, state.chunk_overlap)
         total_chunks_size = 0
         for chunk in tqdm(parent_chunks):
@@ -381,15 +461,13 @@ class ParentChildsplitter:
             self.parent_docs_store[parent_id] = chunk
             total_chunks_size += len(chunk)
         print(f'INFO: Created and stored {len(self.parent_docs_store)} parent chunks.')
+        self._save_parent_docs(state)
         return total_chunks_size // (len(parent_chunks))
          
-    def _ingest_child_docs(self, state):
-        if state.chromadb_dir:
-            client = chromadb.PersistentClient(path=state.chromadb_dir, settings = Settings(anonymized_telemetry=False))
-        else:
-            client = chromadb.Client(settings = Settings(anonymized_telemetry=False))
-        self.chroma_collection = client.get_or_create_collection(name = state.chromadb_col_name)
-        
+    def _ingest_child_docs(self, chroma_collection, state):
+        """
+        Splits parent chunks into child chunks, embeds them, and stores them in ChromaDB.
+        """
         if not self.parent_docs_store:
             print('ERROR: No parent chunks found. Ingestion cannot proceed.')
             raise ValueError('\nParent chunks were not created. Please ingest a document first.')
@@ -404,7 +482,7 @@ class ParentChildsplitter:
                 
                 # generate embeddings
                 embeddings = ollama.embed(state.embed_model, child_chunk)['embeddings']
-                self.chroma_collection.add(
+                chroma_collection.add(
                     ids = child_id,
                     embeddings = embeddings,
                     metadatas={"parent_id": parent_id, "chunk_index": i},
@@ -412,11 +490,16 @@ class ParentChildsplitter:
                 )
                 
                 total_chunk_size += len(child_chunk)
-        print(f'INFO: Added {self.chroma_collection.count()} child chunks to ChromaDB.')
-        return total_chunk_size / self.chroma_collection.count()
+        print(f'INFO: Added {chroma_collection.count()} child chunks to ChromaDB.')
+        return chroma_collection, total_chunk_size / chroma_collection.count()
                 
     def _ingest_documents(self, state) :
         try: 
+            if state.chromadb_dir:
+                client = chromadb.PersistentClient(path=state.chromadb_dir, settings = Settings(anonymized_telemetry=False))
+            else:
+                client = chromadb.Client(settings = Settings(anonymized_telemetry=False))
+            self.chroma_collection = client.get_or_create_collection(name = state.chromadb_collection_name)     
             # process parent chunks
             print('INFO: Ingesting parent chunks...')
             start = time.time()
@@ -426,7 +509,7 @@ class ParentChildsplitter:
             # process child chunks
             print('INFO: Ingesting child chunks...')
             start = time.time()
-            avg_child_size = self._ingest_child_docs(state)
+            self.chroma_collection, avg_child_size = self._ingest_child_docs(self.chroma_collection, state)
             print('INFO: Document successfully ingested into parent-child structure.')
             child_pro_time = time.time() - start
             
@@ -438,9 +521,9 @@ class ParentChildsplitter:
             metadata = {
             'Number of Parent Chunks': num_parent_chunks,
             'Number of Child Chunks': num_child_chunks,
-            'Parent Ingestion Time': f'{round(parent_pro_time, 2)} sec',
-            'Child Ingestion Time': f'{round(child_pro_time, 2)} sec',
-            'Total Ingestion Time': f'{round(total_pro_time, 2)} sec',
+            'Parent Ingestion Time': round(parent_pro_time, 2),
+            'Child Ingestion Time': round(child_pro_time, 2),
+            'Total Ingestion Time': round(total_pro_time, 2),
             'Average Parent Chunk Size': round(avg_parent_size, 2),
             'Average Child Chunk Size': round(avg_child_size, 2),
             'Child to Parents Chunk Ratio': round(num_child_chunks / num_parent_chunks, 2)
@@ -454,10 +537,10 @@ class ParentChildsplitter:
             
         except Exception as e:
             print(f'ERROR: A critical error occurred during document ingestion: {e}')
-            return '```An error occured during document ingestion.```'
+            return 'An error occured during document ingestion.'
         
     def _retrieve_docs(self, query, state):
-        if not self.parent_docs_store or self.chroma_collection.count() == 0:
+        if not self.parent_docs_store:
             print("ERROR: No parent documents are stored in memory. Retrieval will fail.")
             return ''
         
@@ -468,7 +551,7 @@ class ParentChildsplitter:
                 n_results=state.n_results,
                 include=['metadatas']
             )
-            
+
             retrieved_parent_ids = set()
             if query_results['metadatas']:
                 for metadata_lists in query_results['metadatas']:
@@ -489,7 +572,7 @@ class ParentChildsplitter:
         except Exception as e:
             print(f'ERROR: An error occured during document retrieval: {e}')
             return ''
-
+    
 class MapReduceSummarizer:
     def __init__(self) -> None:
         self.text_splitter = RecursiveSplitter()
@@ -594,6 +677,25 @@ class MapReduceSummarizer:
             return 'Failed to save summary file.'
             
 class WebAgent:
+    def _parse_json(self, response):
+        json_str = None
+        try:
+            match = re.search(r'```json\s*(\{.*\})\s*```', response, re.DOTALL)
+            if match:
+                json_str = match.group(1)
+            else:
+                match = re.search(r'(\{.*\})', response, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                else:
+                    json_str = response.strip()
+        
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to decode JSON. Error: {e}. Raw response: {response}")
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"ERROR: Unexpected JSON structure or key not found. Error: {e}. Raw response: {response}")
+        return json_str
+    
     def _rephrase_query(self, query, chat_history, state):
         now = datetime.now().strftime('%Y-%m-%d')
         
@@ -615,24 +717,22 @@ class WebAgent:
             ollama_messages, 
             options={'temperature': 1.0},
             )['message']['content']
-    
-        try:
-            json_match = re.search(r'(\{.*\})', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = response.strip()
-            data = json.loads(json_str)
-            queries = data.get("queries", [])
-            return queries
-            
-        except json.JSONDecodeError as e:
-            print(f"ERROR: Failed to decode JSON from LLM response. Error: {e}. Raw response: {response}")
-            return [query]
-        except (KeyError, IndexError) as e:
-            print(f"ERROR: Unexpected JSON structure or key not found. Error: {e}")
-            return [query]
 
+        parsed_queries = [query]
+        json_str = self._parse_json(response)
+        if json_str:
+            data = json.loads(json_str)
+            queries = data.get("queries")
+            
+            if isinstance(queries, list) and all(isinstance(q, str) for q in queries):
+                parsed_queries = queries
+            else:
+                print(f"ERROR: JSON 'queries' key is not a list of strings. Raw response: {response}")
+        else:
+            print(f"WARNING: No JSON string found in response. Raw response: {response}")
+        
+        return parsed_queries
+            
     def _get_domains_suggestions(self, query, shared_state):
         sites_suggester_system_prompt = (
         'Your role is to provide a list of three trustworthy domains which may have relevant data to user query.'
@@ -649,26 +749,21 @@ class WebAgent:
             messages=ollama_messages
         )['message']['content']
 
-        try:
-            json_match = re.search(r'```json\s*(\{.*\})\s*```', response, re.DOTALL)
-            if not json_match:
-                raise ValueError("No JSON code block found in the LLM response.")
-
-            json_str = json_match.group(1)
+        result = []
+        json_str = self._parse_json(response)
+        if json_str:
             data = json.loads(json_str)
             suggestions = data.get("suggestions", [])
-            if not all(isinstance(s, str) for s in suggestions):
-                raise TypeError("Suggestions must be a list of strings.")
-            return suggestions
-            
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            print(f"ERROR: Failed to process LLM response for domain suggestions. Error: {e}. Raw response: {response}")
-            return []
+            if isinstance(suggestions, list) and all(isinstance(s, str) for s in suggestions):
+                result = suggestions
+            else:
+                print(f"ERROR: JSON 'suggestions' key is not a list of strings. Raw response: {response}")
+            return result
     
     def _search_web_chain(self, user_msg, history, state):
         metadata = {'context': '', 'sources': set(), 'rephrased_queries': []}
         
-        print(f'INFO: Performing web searches...')
+        print(f'INFO: Performing general web searches...')
         # 1. Generate the intial rephrased query
         rephrased_queries = self._rephrase_query(user_msg, history, state)
         
@@ -685,15 +780,18 @@ class WebAgent:
                 continue
             
         # 4. Perform targeted searches for each suggested domain
-        #sites_suggestion = self._get_domains_suggestions(rephrased_queries[0], shared_state)
-        # for site in sites_suggestion:
-        #     if site:
-        #         targeted_query = f'{rephrased_queries} {site}'
-        #         metadata['rephrased_queries'].append(targeted_query)
-        #         web_searches_targeted = DDGS().text(query=targeted_query, max_results = 3)
-        #         for search in web_searches_targeted:
-        #             metadata['context'] += '\n- ' + f'({search['href']})\t' + search['body']
-        #             metadata['sources'].add(search['href'])
+        if state.web_search_suggestions:
+            print('INFO: Performing Targeted searches...')
+            sites_suggestion = self._get_domains_suggestions(rephrased_queries[0], state)
+            if sites_suggestion:
+                for site in sites_suggestion:
+                    if site:
+                        targeted_query = f'{rephrased_queries} {site}'
+                        metadata['rephrased_queries'].append(targeted_query)
+                        web_searches_targeted = DDGS().text(query=targeted_query, max_results = 3)
+                        for search in web_searches_targeted:
+                            metadata['context'] += '\n- ' + f'({search['href']})\t' + search['body']
+                            metadata['sources'].add(search['href'])
         print(f'INFO: Compeleted web searches.')
         metadata['rephrased_queries'] = rephrased_queries
         return metadata  
@@ -791,12 +889,13 @@ class GenPipe:
                 context_with_sources = (f'**Web Search Results**:\n\n{context}\n\n**Sources**:\n\n{sources_str}')
                 history.append({'role': 'assistant', 'content': context_with_sources, 'metadata': {'title': 'Web Search'}})
             elif state.rag_flag is True:
-                history.append({'role': 'assistant', 'content': context, 'metadata': {'title': 'Web Search'}})
+                history.append({'role': 'assistant', 'content': context, 'metadata': {'title': 'Rag Context'}})
             else:
                 pass
         yield '', history, history
     
     def _regen_msg(self, history, state):
+        # Non-destructively find the index of the last user message by reversing the history
         last_user_msg_index = -1
         for i in range(len(history) - 1, -1, -1):
             if history[i].get('role', '') == 'user':
@@ -959,14 +1058,18 @@ class ChatUI:
                     
                 self.update_model_settings_btn = gr.Button(value='Update Model Settings', size='md', interactive=True)
                 self.model_settings_page_status = gr.Markdown(value='``````', label='Settings Status', visible=True)
-            with gr.Tab(label='RAG Settings'):
-                gr.Markdown('**ChromaDB settings**')
-                self.chromadb_dir_in = gr.Textbox(value='chroma_db',label='Chromadb store directory', interactive=True)
-                self.chromadb_col_name_in = gr.Textbox(value='docs',label='Chromadb store collection name', interactive=True)
                 
+            # additional context settings
+            with gr.Tab(label='Additional Context Settings'):
                 gr.Markdown('**RAG Settings**')
                 self.n_results_in = gr.Slider(0, 10, step=1, value=5, label='Number of Retrieved Results', interactive=True)
+                self.web_search_sug_in = gr.Checkbox(label='Web Search suggestions', interactive=True)
                 
+                gr.Markdown('**Directories**')
+                self.chats_dir_in = gr.Textbox('chats', label='Chats Input Directory', interactive=True)
+                self.chromadb_dir_in = gr.Textbox('chroma_db', label='Chromadb Input Directory', interactive=True)
+                self.chromadb_col_name_in = gr.Textbox('child_docs', label='Chromadb Collection Name', interactive=True)
+                self.parent_docs_name_in = gr.Textbox('parent_docs', label='Parent Document Name', interactive=True)
 
                 self.update_rag_settings_btn = gr.Button(value='Update Rag Settings', interactive=True)
                 self.rag_settings_page_status = gr.Markdown(value='``````', label='Settings Status', visible=True)
@@ -1053,8 +1156,9 @@ class ChatUI:
             [self.state, self.model_settings_page_status]
         )
         self.update_rag_settings_btn.click(
-            self.state.value._update_rag_settings,
-            [self.n_results_in, self.chromadb_dir_in, self.chromadb_col_name_in],
+            self.state.value._update_context_settings,
+            [self.n_results_in, self.web_search_sug_in, self.chats_dir_in, 
+             self.chromadb_dir_in, self.chromadb_col_name_in, self.parent_docs_name_in ],
             [self.state, self.rag_settings_page_status]
         )
     
