@@ -432,7 +432,7 @@ class ParentChildsplitter:
     
     def _load_parent_docs(self, state):
         try:
-            filename = state.parent_dir_name
+            filename = state.parent_docs_name
             # ensure chats folder exsists
             os.makedirs(state.chromadb_dir, exist_ok=True)
             filepath = os.path.join(state.chromadb_dir, filename.strip())
