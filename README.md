@@ -77,9 +77,7 @@ ollama-rag-chat-ui/
 
 ## ⚙️ Configuration & Data Persistence
 - **Chat Histories**: Saved chats are stored as JSON files in the chats/ directory.
-- **User Profiles**: Model settings saved as profiles are stored in profiles.json.
-- **RAG Embeddings**: The vector database (ChromaDB) for RAG is persistently stored in the chroma_db/ directory.
-- **Default Model Configuration**: Default models and parameters are set within chatui_rag_production.py. These can be overridden in the UI's "Settings" tab.
+- **RAG Embeddings**: Parent Documents are stored as JSON file while child chunk embeddings are stored in ChromDB vectorstore.
 
 ## 🌐 How to Use the UI
 1. **Chat Tab:**
