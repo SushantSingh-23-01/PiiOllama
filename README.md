@@ -2,14 +2,13 @@
 
 ## 💬 Personalized interactive Ollama UI with RAG 
 
-A user-friendly local web interface for interacting with [Ollama](https://ollama.com/) models, featuring Retrieval Augmented Generation (RAG) capabilities using [ChromaDB](https://www.trychroma.com/). This application allows you to chat with various large language models, perform Retrieval-Augmented Generation (RAG) from PDF documents and real-time web search results from DuckDuckGo.
+A user-friendly local web interface for interacting with [Ollama](https://ollama.com/) models, featuring Retrieval Augmented Generation (RAG) capabilities using [ChromaDB](https://www.trychroma.com/). This application allows you to chat with various large language models, perform Retrieval-Augmented Generation (RAG) from PDF documents, real-time web search results from DuckDuckGo and summarize documents.
 
 
 ## ✨ Features
 
 -   **Local LLM Integration**: Connects seamlessly with any model served through Ollama.
 -   **Retrieval-Augmented Generation (RAG)**: Ingest PDF documents to build a local knowledge base that the LLM can use to answer questions.
--   **Parent-Child Chunking**: Implements an advanced RAG strategy for improved context retrieval by embedding smaller "child" chunks while retrieving the larger, more coherent "parent" chunks.
 -   **Live Web Search**: Augment conversations with up-to-date information from the internet using the DuckDuckGo search API.
 -   **MapReduce Summarization**: Summarize long documents efficiently by breaking them into chunks, summarizing each individually, and then combining the results.
 -   **Full Chat Management**: Save and load chat histories to resume conversations at any time.
