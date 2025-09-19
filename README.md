@@ -77,7 +77,8 @@ ollama-rag-chat-ui/
 
 ## ⚙️ Configuration & Data Persistence
 - **Chat Histories**: Saved chats are stored as JSON files in the chats/ directory.
-- **RAG Embeddings**: Parent Documents are stored as JSON file while child chunk embeddings are stored in ChromDB vectorstore.
+- **RAG**: Parent Documents are stored as JSON file while child chunk embeddings are stored in ChromDB vectorstore.
+- **Summary**: Document summaries can be saved as Markdown file.
 
 ## 🌐 How to Use the UI
 1. **Chat Tab:**
