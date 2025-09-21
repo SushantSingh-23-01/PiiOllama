@@ -233,6 +233,32 @@ def _get_ollama_models():
         model_names.append(i['model'])
     return model_names  
 
+def _parse_thinking(model_repsonse):
+        thinking_tag_start = '<think>'
+        thinking_tag_end = '</think>'
+        # Case 1: The thinking block has started and finished.
+        if thinking_tag_start in model_repsonse and thinking_tag_end in model_repsonse:
+            # Use regex to definitively separate the completed thinking block from the main message.
+            match = re.search(r'<think>(.*?)</think>(.*)', model_repsonse, re.DOTALL)
+            if match:
+                return match.group(1).strip(), match.group(2).strip()
+            else:
+                # Fallback if regex fails, though unlikely with both tags present.
+                return "", model_repsonse
+
+        # Case 2: The thinking block has started but not yet finished.
+        elif thinking_tag_start in model_repsonse:
+            # Split the content at the opening <think> tag.
+            parts = model_repsonse.split(thinking_tag_start, 1)
+            main_message_part = parts[0].strip()
+            thinking_message_part = parts[1] # Don't strip here to preserve streaming space.
+            return thinking_message_part, main_message_part
+
+        # Case 3: No <think> tag has appeared yet.
+        else:
+            # Everything is part of the main message.
+            return "", model_repsonse.strip()
+
 class PdfReader:
     def clean_text(self, text):
         '''Light cleaning method for PDF texts'''
@@ -312,9 +338,6 @@ class RecursiveSplitter:
         chunk_overlap,
         separators = ["\n\n", "\n", ". ", " ", ""],
         ):
-        """
-        The main public method to split text into a list of chunks.
-        """
         return self._recursive_split(text, chunk_size, chunk_overlap, separators)
 
     def _recursive_split(
@@ -324,7 +347,6 @@ class RecursiveSplitter:
         chunk_overlap,
         separators = ["\n\n", "\n", ". ", " ", ""],
         ):
-        """The core recursive splitting logic."""
         final_chunks = []
         
         # If the text is empty or None, return an empty list
@@ -465,9 +487,6 @@ class ParentChildsplitter:
         return total_chunks_size // (len(parent_chunks))
          
     def _ingest_child_docs(self, chroma_collection, state):
-        """
-        Splits parent chunks into child chunks, embeds them, and stores them in ChromaDB.
-        """
         if not self.parent_docs_store:
             print('ERROR: No parent chunks found. Ingestion cannot proceed.')
             raise ValueError('\nParent chunks were not created. Please ingest a document first.')
@@ -584,7 +603,9 @@ class MapReduceSummarizer:
             'Keep the summary concise and retain the most important details.\n\n'
             f'TEXT:\n---\n{chunk}\n---\nSUMMARY: '
         )
-        response = ollama.generate(model=state.chat_model, prompt=map_prompt)['response']
+        message = [{'role': 'system', 'content': map_prompt}]
+        response = ollama.chat(model=state.chat_model, messages=message)['message']['content']
+        _, response = _parse_thinking(response)
         return response
     
     def _reduce_function(self, summaries, state):
@@ -595,13 +616,14 @@ class MapReduceSummarizer:
             'Output the summary in proper Markdown format with bulltet key points.\n\n'
             f'SUMMARIES:\n---\n{'\n- '.join(summaries)}\n---\nFINAL SUMMARY: '
         )
-        response = ollama.generate(model=state.chat_model, prompt=reduce_prompt)['response']
+        message = [{'role': 'system', 'content': reduce_prompt}]
+        response = ollama.chat(model=state.chat_model, messages=message)['message']['content']
+        _, response = _parse_thinking(response)
         return response
 
     
     def _pre_summarize(self, state, chunk_size, chunk_overlap):
         if not state.documents_text:
-            print('ERROR: Read document first.')
             raise ValueError('No Text was read.')
         
         chunks = self.text_splitter.split_text(state.documents_text, chunk_size, chunk_overlap)
@@ -620,35 +642,36 @@ class MapReduceSummarizer:
         
     def summarize(self, state, chunk_size, chunk_overlap):
         if not state.documents_text:
-            print('ERROR: Read document first.')
+            print('Read document first.')
             raise ValueError('No document was read.')
-        print('INFO: Starting summarization...')
-        chunks = self.text_splitter.split_text(state.documents_text, chunk_size, chunk_overlap)
-        
+        chunks = self.text_splitter.split_text(state.documents_text[:5000], chunk_size, chunk_overlap)
+
+        print('Summarizing document')
         chunk_summaries = []
         total_chunk_len = 0
-        print(f'INFO: Summarizing Chunks...')
-        for chunk in tqdm(chunks):
+        for i, chunk in enumerate(chunks):
+            start = time.time()
             summary = self._map_function(chunk, state)
             if summary:
                 chunk_summaries.append(summary)
             
             chunk_len = len(chunk)
             total_chunk_len += chunk_len
+            print(
+                f'Summarized Chunk-{i}: {time.time()-start:.2f} s | ',
+                f'Compression (%): {round((chunk_len - len(summary)) / len(summary) * 100, 2)}')
         if not chunk_summaries:
-            print('WARNING: No summaries were generated in Mapping step.')
             return '```\nFailed to summarize document.\n```'
         
-        print(f'INFO: Consolidating Chunk Summaries.')
         final_summary = self._reduce_function(chunk_summaries, state)
+        _, final_summary = _parse_thinking(final_summary)
         state.sum_text = final_summary
-        print('INFO: Finished Summarization.')
-        return final_summary
+        print('\nFinished Summarization.\n')
+        return f'```{final_summary}```'
 
     def save_summary_markdown(self, filename, state):
 
         if not state.sum_text:
-            print('ERROR: Generate summary first', 'e')
             raise ValueError('Text was not summarized.')
 
         # Remove trailing whitespaces
@@ -718,6 +741,7 @@ class WebAgent:
             options={'temperature': 1.0},
             )['message']['content']
 
+        response = _parse_thinking(response)
         parsed_queries = [query]
         json_str = self._parse_json(response)
         if json_str:
@@ -748,7 +772,7 @@ class WebAgent:
             model=shared_state.chat_model,
             messages=ollama_messages
         )['message']['content']
-
+        response = _parse_thinking(response)
         result = []
         json_str = self._parse_json(response)
         if json_str:
@@ -861,8 +885,8 @@ class GenPipe:
         # update history with user message
         history += [{'role': 'user', 'content': msg}]
         # create a bot message placeholder for streaming
-        history += [{'role': 'assistant', 'content': ''}]
-        
+        history.append({'role': 'assistant', 'content': '', 'metadata': {'title': 'thinking'}})
+        history.append({'role': 'assistant', 'content': ''})
         # stream llm message
         full_res = ''
         res_stream = ollama.chat(
@@ -877,10 +901,18 @@ class GenPipe:
             }
             )
         
-        for i in tqdm(res_stream, 'LLM Generation...'):
+        for i in res_stream:
             full_res += i['message']['content']
-            history[-1]['content'] = full_res
+            think, response = _parse_thinking(full_res)
+            history[-2]['content'] = "🤔\n" + think
+            history[-1]['content'] = response
             yield '', history, history
+    
+        final_thinking, _ = _parse_thinking(full_res)
+        # If there was no thinking content, remove its placeholder
+        if not final_thinking.strip():
+            history.pop(-2)
+
             
         
         if context:
@@ -976,7 +1008,7 @@ class ChatUI:
         with  gr.Column(visible=False) as self.docs_page:
             gr.Markdown('## Documents')   
             with gr.Tab('Reading'):
-                gr.Markdown('### Reading PDF files.')
+                gr.Markdown('### Reading PDF files')
                 self.pdf_files_in = gr.File(
                     file_count='multiple',
                     file_types=['.pdf'],
@@ -988,7 +1020,7 @@ class ChatUI:
                 self.pdfs_status = gr.Markdown('``````')
             
             with gr.Tab('RAG'):
-                gr.Markdown('### Preprocessing text for RAG.')
+                gr.Markdown('### Preprocessing text for RAG')
                 with gr.Row():
                     self.chunk_size_in = gr.Slider(0, 512, 450, step=1, label='Chunk Size', interactive=True)
                     self.chunk_overlap_in = gr.Slider(0, 64, 45, step=1, label='Chunk Overlap', interactive=True)
@@ -1016,8 +1048,7 @@ class ChatUI:
                 gr.Markdown('### Pre Summarization Status')
                 self.pre_sum_status = gr.Markdown('``````')
                 gr.Markdown('### Summarized Documents')
-                with gr.Group():
-                    self.sum_status = gr.Markdown('')
+                self.sum_status = gr.Markdown('``````')
             
         with gr.Column(visible=False) as self.settings_page:
             gr.Markdown('## Settings')
