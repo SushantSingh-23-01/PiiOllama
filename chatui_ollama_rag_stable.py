@@ -5,13 +5,13 @@ from datetime import datetime
 import ollama
 import chromadb
 from chromadb.config import Settings
-from tqdm import tqdm
 import re
 import unicodedata
 import hashlib
 import pymupdf
 import time
 from ddgs import DDGS
+from tqdm import tqdm
 
 class SharedState:
     def __init__(self) -> None:
@@ -29,8 +29,8 @@ class SharedState:
         self.sum_text = ''
         
     def _model_parameters(self):
-        self.chat_model = 'gemma3:4b'
-        self.embed_model = 'granite-embedding:latest'
+        self.chat_model = 'qwen3:1.7b'
+        self.embed_model = 'snowflake-arctic-embed:33m'
         self.system_prompt = 'You are a helpful assistant.'
         self.temperature = 1.0
         self.top_k = 64
@@ -94,7 +94,6 @@ class SharedState:
             
             # Clear the ChromaDB collection to remove old embeddings
             try:
-                print(self.chromadb_dir, self.n_results)
                 client = chromadb.PersistentClient(path=self.chromadb_dir, settings=Settings(anonymized_telemetry=False))
                 # Check if collection exists before trying to delete
                 collections = [c.name for c in client.list_collections()]
@@ -123,7 +122,7 @@ class SharedState:
         for k, v in status_dict.items():
             status_output += f'{k:<{max_key_length+10}} {v}\n'
 
-        print('INFO: Updated Model Settings.')
+        print('INFO: Updated Model Settings')
         return self, f'```\n{status_output}\n```'
     
     def _update_context_settings(
@@ -155,7 +154,7 @@ class SharedState:
         status_output = 'Updated Settings:\n' + '-'*100 + '\n'
         for k, v in status_dict.items():
             status_output += f'{k:<{max_key_length+10}} {v}\n'
-        print('INFO: Updated Context Settings.')
+        print('INFO: Updated Context Settings')
         return self, f'```\n{status_output}\n```'
     
     def _handle_context_mode(self, choice):
@@ -188,7 +187,7 @@ class FileManager:
             print(f'INFO: Loaded chat {filename}')
             return history, history, state, gr.Textbox(filename)
         except json.JSONDecodeError as e:
-            print(f'ERROR: Failed to load chat. The chat maybe corrupted.')
+            print(f'ERROR: Failed to load chat. The chat maybe corrupted')
         except Exception as e:
             print(f'ERROR: Error occured trying to load the file: {e}')
     
@@ -197,7 +196,7 @@ class FileManager:
         Save chat files in JSON format.
         '''
         if not history:
-            print('WARNING: Trying to save empty chat history.')
+            print('WARNING: Trying to save empty chat history')
             return gr.Dropdown(), gr.Textbox()
         
         # remove trailing whitespaces 
@@ -288,17 +287,16 @@ class PdfReader:
                 total_text += self.clean_text(text)
             doc.close()
         except Exception as e:
-            print(f'ERROR: Error ocurred reading PDF. {e}')
+            print(f'ERROR: Error ocurred reading PDF {e}')
         return total_text, page_count
     
     def _read_pdfs(self, filenames, state):
-        print('INFO: Reading PDFs...')
         start = time.time()
         total_text = ''    
         file_details = []
         
 
-        for f in tqdm(filenames):
+        for f in filenames:
             file_text, page_count = self._read_pdf(f)
 
             total_text += file_text
@@ -313,7 +311,7 @@ class PdfReader:
             })
             
         end = time.time()
-        print('INFO: Finished Reading PDFs.')
+        print('INFO: Finished Reading PDFs')
         total_time = end - start
         metadata = {
             'number_of_pdfs': len(filenames),
@@ -373,7 +371,7 @@ class RecursiveSplitter:
             splits = re.split(f'({re.escape(current_separator)})', text)
         except re.error as e:
             # If the separator is invalid for regex, skip it and recurse.
-            print(f"ERROR: Invalid regex separator '{current_separator}'. Skipping and recursing. Error: {e}")
+            print(f"\nInvalid regex separator '{current_separator}'. Skipping and recursing. Error: {e}\n")
             return self._recursive_split(text, chunk_size, chunk_overlap, next_separators)
 
         # Merge the text parts with their subsequent separators.
@@ -465,14 +463,15 @@ class ParentChildsplitter:
             print(f'INFO: Loaded parent document store {filename}')
     
         except json.JSONDecodeError as e:
-            print(f'ERROR: Failed to load Parent document store. The chat maybe corrupted.')
+            print(f'ERROR: Failed to load Parent document store. The chat maybe corrupted {e}')
         except Exception as e:
             print(f'ERROR: Error occured trying to load the file: {e}')
 
     
     def _ingest_parent_docs(self, state):
         # load parent documents store
-        if state.chromadb_dir:
+        filepath = os.path.join(state.chromadb_dir, state.parent_docs_name.strip())
+        if os.path.exists(filepath):
             self._load_parent_docs(state)
         
         parent_chunks = self.text_splitter.split_text(state.documents_text, state.chunk_size, state.chunk_overlap)
@@ -482,7 +481,7 @@ class ParentChildsplitter:
             parent_id = hashlib.sha256(chunk.encode()).hexdigest()
             self.parent_docs_store[parent_id] = chunk
             total_chunks_size += len(chunk)
-        print(f'INFO: Created and stored {len(self.parent_docs_store)} parent chunks.')
+        print(f'INFO: Created and stored {len(self.parent_docs_store)} parent chunks')
         self._save_parent_docs(state)
         return total_chunks_size // (len(parent_chunks))
          
@@ -509,7 +508,7 @@ class ParentChildsplitter:
                 )
                 
                 total_chunk_size += len(child_chunk)
-        print(f'INFO: Added {chroma_collection.count()} child chunks to ChromaDB.')
+        print(f'INFO: Added {chroma_collection.count()} child chunks to ChromaDB')
         return chroma_collection, total_chunk_size / chroma_collection.count()
                 
     def _ingest_documents(self, state) :
@@ -529,7 +528,7 @@ class ParentChildsplitter:
             print('INFO: Ingesting child chunks...')
             start = time.time()
             self.chroma_collection, avg_child_size = self._ingest_child_docs(self.chroma_collection, state)
-            print('INFO: Document successfully ingested into parent-child structure.')
+            print('INFO: Document successfully ingested into parent-child structure')
             child_pro_time = time.time() - start
             
             # get counts and sizes for metadata
@@ -560,7 +559,7 @@ class ParentChildsplitter:
         
     def _retrieve_docs(self, query, state):
         if not self.parent_docs_store:
-            print("ERROR: No parent documents are stored in memory. Retrieval will fail.")
+            print("ERROR: No parent documents are stored in memory. Retrieval will fail")
             return ''
         
         try:
@@ -642,11 +641,10 @@ class MapReduceSummarizer:
         
     def summarize(self, state, chunk_size, chunk_overlap):
         if not state.documents_text:
-            print('Read document first.')
             raise ValueError('No document was read.')
         chunks = self.text_splitter.split_text(state.documents_text[:5000], chunk_size, chunk_overlap)
 
-        print('Summarizing document')
+        print('INFO: Summarizing document...')
         chunk_summaries = []
         total_chunk_len = 0
         for i, chunk in enumerate(chunks):
@@ -659,20 +657,20 @@ class MapReduceSummarizer:
             total_chunk_len += chunk_len
             print(
                 f'Summarized Chunk-{i}: {time.time()-start:.2f} s | ',
-                f'Compression (%): {round((chunk_len - len(summary)) / len(summary) * 100, 2)}')
+                f'Compression (%): {round((chunk_len - len(summary)) / chunk_len* 100, 2)}')
         if not chunk_summaries:
             return '```\nFailed to summarize document.\n```'
         
         final_summary = self._reduce_function(chunk_summaries, state)
         _, final_summary = _parse_thinking(final_summary)
         state.sum_text = final_summary
-        print('\nFinished Summarization.\n')
+        print('INFO: Finished Summarization')
         return f'```{final_summary}```'
 
     def save_summary_markdown(self, filename, state):
 
         if not state.sum_text:
-            raise ValueError('Text was not summarized.')
+            raise ValueError('ERROR: Text was not summarized.')
 
         # Remove trailing whitespaces
         basename = filename.strip()
@@ -816,7 +814,7 @@ class WebAgent:
                         for search in web_searches_targeted:
                             metadata['context'] += '\n- ' + f'({search['href']})\t' + search['body']
                             metadata['sources'].add(search['href'])
-        print(f'INFO: Compeleted web searches.')
+        print(f'INFO: Compeleted web searches')
         metadata['rephrased_queries'] = rephrased_queries
         return metadata  
 
